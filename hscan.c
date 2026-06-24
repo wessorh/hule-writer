@@ -68,6 +68,7 @@ static void usage(const char *prog) {
         "hscan — Holloman YARA-X signature scanner\n"
         "\n"
         "Usage: %s [flags] < input_file\n"
+        "       %s [flags] file_to_scan\n"
         "\n"
         "Flags:\n"
         "  -out FILE     Write rule to FILE instead of stdout\n"
@@ -81,10 +82,11 @@ static void usage(const char *prog) {
         "  -help          Show this help\n"
         "\n"
         "Examples:\n"
-        "  %s < malware.bin\n"
-        "  %s -t trojan.redir -T \"Redirect malware\" < evil.exe\n"
-        "  %s -short < sample.dll\n"
+        "  %s malware.bin\n"
+        "  %s -t trojan.redir -T \"Redirect malware\" evil.exe\n"
+        "  %s -short sample.dll\n"
         "  cat payload | %s -out rule.yar -t trojan.salgorea\n"
+        "  %s < malware.bin\n"
         "\n",
         prog, prog, prog, prog, prog
     );
@@ -205,7 +207,15 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    /* Read input first (need size to choose Hilbert order) */
+    /* If a positional file argument was given, read it via freopen */
+    if (filename && strcmp(filename, "-") != 0) {
+        if (!freopen(filename, "rb", stdin)) {
+            fprintf(stderr, "hscan: cannot open %s\n", filename);
+            return 1;
+        }
+    }
+
+    /* Read input (from stdin, or from file if freopen'd above) */
     size_t file_len = 0;
     uint8_t *data = slurp(&file_len);
     if (!data) {
