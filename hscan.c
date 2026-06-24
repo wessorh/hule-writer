@@ -5,10 +5,10 @@
  * and emits a YARA-X rule with hollomon.cluster_id condition.
  *
  * Build:
- *   gcc -O3 -mavx2 -o hscan hscan.c \
- *       -I/home/wessorh/work/ai/holloman5/src/common \
- *       -I/home/wessorh/work/ai/holloman5/src/avx2/hilbert-avx2/include \
- *       /home/wessorh/work/ai/holloman5/lib/libholloman_avx2.a -lm
+ *   make
+ *
+ * Self-contained — includes holloman5 AVX2 sources directly.
+ * No external library required.
  *
  * Usage:
  *   ./hscan < file.bin                    # print rule to stdout
