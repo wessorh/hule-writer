@@ -140,20 +140,31 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    /* Initialize holloman5 */
-    int ret = holloman_init(13);  /* order 13 = up to 67 MB */
-    if (ret != 0) {
-        fprintf(stderr, "hscan: holloman_init failed (%d)\n", ret);
-        return 3;
-    }
-
-    /* Read input */
+    /* Read input first (need size to choose Hilbert order) */
     size_t file_len = 0;
     uint8_t *data = slurp(&file_len);
     if (!data) {
         fprintf(stderr, "hscan: failed to read input\n");
-        holloman_cleanup();
         return 1;
+    }
+
+    /* Choose Hilbert order: need 4^order >= file_len, minimum 8 */
+    uint32_t order = 12;  /* default for stdin (16M cells) */
+    if (file_len > 0) {
+        /* 4^order >= file_len  →  order >= log4(file_len) = log2(file_len)/2 */
+        order = 8;  /* minimum */
+        while (((size_t)1 << (2 * order)) < file_len && order < 20)
+            order++;
+    }
+    fprintf(stderr, "hscan: file_len=%lu, order=%u (grid=%lu cells)\n",
+            file_len, order, (size_t)1 << (2 * order));
+
+    /* Initialize holloman5 */
+    int ret = holloman_init(order);
+    if (ret != 0) {
+        fprintf(stderr, "hscan: holloman_init failed (%d)\n", ret);
+        free(data);
+        return 3;
     }
 
     /* Compute fingerprint */
