@@ -53,9 +53,46 @@ static uint8_t *slurp(size_t *out_len) {
     return buf;
 }
 
+/* ─── Threat metadata ────────────────────────────────────────────────── */
+typedef struct {
+    const char *family;
+    const char *description;
+    const char *reference;
+    const char *tlp;         /* TLP:RED, AMBER, GREEN, WHITE */
+    const char *author;
+} ThreatMeta;
+
+/* ─── Usage ──────────────────────────────────────────────────────────── */
+static void usage(const char *prog) {
+    fprintf(stderr,
+        "hscan — Holloman YARA-X signature scanner\n"
+        "\n"
+        "Usage: %s [flags] < input_file\n"
+        "\n"
+        "Flags:\n"
+        "  -out FILE     Write rule to FILE instead of stdout\n"
+        "  -name NAME    Set filename metadata (default: \"stdin\")\n"
+        "  -short        Output cluster_id only (k.xxxx...)\n"
+        "  -t FAMILY      Add threat metadata (family name)\n"
+        "  -T DESC        Threat description\n"
+        "  -ref URL       Reference URL\n"
+        "  -tlp LEVEL     TLP level (RED/AMBER/GREEN/WHITE)\n"
+        "  -author NAME   Rule author\n"
+        "  -help          Show this help\n"
+        "\n"
+        "Examples:\n"
+        "  %s < malware.bin\n"
+        "  %s -t trojan.redir -T \"Redirect malware\" < evil.exe\n"
+        "  %s -short < sample.dll\n"
+        "  cat payload | %s -out rule.yar -t trojan.salgorea\n"
+        "\n",
+        prog, prog, prog, prog, prog
+    );
+}
+
 /* ─── Print YARA-X rule ──────────────────────────────────────────────── */
 static void print_rule(FILE *out, const uint8_t fp[16], size_t file_len,
-                        const char *filename) {
+                        const char *filename, const ThreatMeta *tm) {
     /* Convert fingerprint to hex */
     char fp_hex[FP_HEX_LEN + 1];
     for (int i = 0; i < 16; i++)
@@ -88,23 +125,37 @@ static void print_rule(FILE *out, const uint8_t fp[16], size_t file_len,
         "import \"hollomon\"\n\n"
         "rule hscan_%s_%08lx {\n"
         "    meta:\n"
-        "        description = \"Holloman fingerprint YARA-X rule\"\n"
+        "        description = \"%s\"\n"
         "        scanner     = \"hscan\"\n"
         "        file_size   = %lu\n"
         "        fingerprint = \"%s\"\n"
         "        cluster_id  = \"%s\"\n"
         "        scanned_at  = \"%s\"\n"
-        "        filename    = \"%s\"\n"
-        "    condition:\n"
-        "        hollomon.cluster_id == \"%s\"\n"
-        "}\n",
+        "        filename    = \"%s\"\n",
         rule_name,
         (unsigned long)(file_len ^ (file_len >> 32)),
+        tm->description ? tm->description : "Holloman fingerprint YARA-X rule",
         file_len,
         fp_hex,
         cluster_id,
         ts,
-        bn,
+        bn
+    );
+
+    /* Optional threat metadata */
+    if (tm->family && tm->family[0])
+        fprintf(out, "        family      = \"%s\"\n", tm->family);
+    if (tm->reference && tm->reference[0])
+        fprintf(out, "        reference   = \"%s\"\n", tm->reference);
+    if (tm->tlp && tm->tlp[0])
+        fprintf(out, "        tlp         = \"%s\"\n", tm->tlp);
+    if (tm->author && tm->author[0])
+        fprintf(out, "        author      = \"%s\"\n", tm->author);
+
+    fprintf(out,
+        "    condition:\n"
+        "        hollomon.cluster_id == \"%s\"\n"
+        "}\n",
         cluster_id
     );
 }
@@ -121,14 +172,28 @@ int main(int argc, char **argv) {
     const char *outpath = NULL;
     const char *filename = NULL;
     int short_mode = 0;
+    ThreatMeta tm = {0};
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-out") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "-help") == 0 || strcmp(argv[i], "--help") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "-out") == 0 && i + 1 < argc) {
             outpath = argv[++i];
         } else if (strcmp(argv[i], "-short") == 0) {
             short_mode = 1;
         } else if (strcmp(argv[i], "-name") == 0 && i + 1 < argc) {
             filename = argv[++i];
+        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            tm.family = argv[++i];
+        } else if (strcmp(argv[i], "-T") == 0 && i + 1 < argc) {
+            tm.description = argv[++i];
+        } else if (strcmp(argv[i], "-ref") == 0 && i + 1 < argc) {
+            tm.reference = argv[++i];
+        } else if (strcmp(argv[i], "-tlp") == 0 && i + 1 < argc) {
+            tm.tlp = argv[++i];
+        } else if (strcmp(argv[i], "-author") == 0 && i + 1 < argc) {
+            tm.author = argv[++i];
         } else if (argv[i][0] != '-') {
             filename = argv[i];
         }
@@ -192,7 +257,7 @@ int main(int argc, char **argv) {
     if (short_mode) {
         print_short(out, fp);
     } else {
-        print_rule(out, fp, file_len, filename);
+        print_rule(out, fp, file_len, filename, &tm);
     }
 
     if (outpath) fclose(out);
