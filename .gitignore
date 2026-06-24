@@ -1,1 +1,3 @@
 hscan
+*.o
+hscan
