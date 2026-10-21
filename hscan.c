@@ -28,6 +28,9 @@
 #define FP_HEX_LEN 32
 #define MAX_INPUT   (1 << 30)  /* 1 GB cap */
 
+/* Hilbert order -> cluster-id prefix char (same alphabet as holloman3). */
+static const char ORDER_ALPHABET[] = "  cdefghijkmnopqrstuvwxyz";
+
 /* ─── Read entire stdin into a buffer ────────────────────────────────── */
 static uint8_t *slurp(size_t *out_len) {
     size_t cap = 65536;
@@ -94,16 +97,18 @@ static void usage(const char *prog) {
 
 /* ─── Print YARA-X rule ──────────────────────────────────────────────── */
 static void print_rule(FILE *out, const uint8_t fp[16], size_t file_len,
-                        const char *filename, const ThreatMeta *tm) {
+                        const char *filename, const ThreatMeta *tm,
+                        uint32_t order) {
     /* Convert fingerprint to hex */
     char fp_hex[FP_HEX_LEN + 1];
     for (int i = 0; i < 16; i++)
         sprintf(fp_hex + i * 2, "%02x", fp[i]);
     fp_hex[FP_HEX_LEN] = '\0';
 
-    /* Build cluster_id = "k." + fingerprint */
+    /* Build cluster_id = "<order_char>." + fingerprint */
     char cluster_id[64];
-    snprintf(cluster_id, sizeof(cluster_id), "k.%s", fp_hex);
+    char oc = (order < sizeof(ORDER_ALPHABET) - 1) ? ORDER_ALPHABET[order] : '?';
+    snprintf(cluster_id, sizeof(cluster_id), "%c.%s", oc, fp_hex);
 
     /* Sanitize filename for rule name */
     char rule_name[256];
@@ -124,7 +129,7 @@ static void print_rule(FILE *out, const uint8_t fp[16], size_t file_len,
     strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", gmtime(&now));
 
     fprintf(out,
-        "import \"hollomon\"\n\n"
+        "import \"holloman\"\n\n"
         "rule hscan_%s_%08lx {\n"
         "    meta:\n"
         "        description = \"%s\"\n"
@@ -156,15 +161,15 @@ static void print_rule(FILE *out, const uint8_t fp[16], size_t file_len,
 
     fprintf(out,
         "    condition:\n"
-        "        hollomon.cluster_id == \"%s\"\n"
+        "        holloman.clusterid == \"%s\"\n"
         "}\n",
         cluster_id
     );
 }
 
 /* ─── Print short cluster ID only (for piping) ──────────────────────── */
-static void print_short(FILE *out, const uint8_t fp[16]) {
-    fprintf(out, "k.");
+static void print_short(FILE *out, const uint8_t fp[16], uint32_t order) {
+    fprintf(out, "%c.", (order < sizeof(ORDER_ALPHABET) - 1) ? ORDER_ALPHABET[order] : '?');
     for (int i = 0; i < 16; i++) fprintf(out, "%02x", fp[i]);
     fprintf(out, "\n");
 }
@@ -201,9 +206,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Check AVX2 */
+    /* Check for a supported SIMD path (AVX2 / AVX1-SSE4.1 / NEON) */
     if (!holloman_is_avx2_available()) {
-        fprintf(stderr, "hscan: AVX2 not available on this CPU\n");
+        fprintf(stderr, "hscan: no supported SIMD (AVX2/AVX1/NEON) on this CPU\n");
         return 2;
     }
 
@@ -223,13 +228,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Choose Hilbert order: need 4^order >= file_len, minimum 8 */
-    uint32_t order = 12;  /* default for stdin (16M cells) */
+    /* Hilbert order = ceil(log2(size)/2) — same as holloman3-python's
+       order_for_size and the native hilbert_calculate_order. */
+    uint32_t order = 0;
     if (file_len > 0) {
-        /* 4^order >= file_len  →  order >= log4(file_len) = log2(file_len)/2 */
-        order = 8;  /* minimum */
-        while (((size_t)1 << (2 * order)) < file_len && order < 20)
+        uint64_t n = (uint64_t)file_len - 1;
+        while (n > 0) {
+            n >>= 1;
             order++;
+        }
+        order = (order + 1) >> 1;
     }
     fprintf(stderr, "hscan: file_len=%lu, order=%u (grid=%lu cells)\n",
             file_len, order, (size_t)1 << (2 * order));
@@ -265,9 +273,9 @@ int main(int argc, char **argv) {
     }
 
     if (short_mode) {
-        print_short(out, fp);
+        print_short(out, fp, order);
     } else {
-        print_rule(out, fp, file_len, filename, &tm);
+        print_rule(out, fp, file_len, filename, &tm, order);
     }
 
     if (outpath) fclose(out);
